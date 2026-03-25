@@ -6,7 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 랜덤 대기 (2~4초)
 function randomDelay() {
   const ms = 2000 + Math.random() * 2000;
   return new Promise((r) => setTimeout(r, ms));
@@ -20,48 +19,81 @@ function extractDomain(url) {
   }
 }
 
-// 모바일 네이버 검색 결과에서 모든 외부 링크를 순서대로 추출
+// 모바일 네이버 웹 탭에서 검색 결과 추출
 async function searchMobileNaver(page, keyword) {
-  const url = `https://m.search.naver.com/search.naver?query=${encodeURIComponent(keyword)}`;
+  // 모바일 웹문서 탭 직접 접근
+  const url = `https://m.search.naver.com/search.naver?where=m_web&query=${encodeURIComponent(keyword)}`;
 
-  console.log(`  → ${url}`);
+  console.log(`  → 웹 탭 로드 중...`);
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-
-  // 추가 대기 (동적 렌더링 완료)
   await page.waitForTimeout(2000);
 
-  // 스크롤 다운해서 더 많은 결과 로드
-  for (let i = 0; i < 5; i++) {
-    await page.evaluate(() => window.scrollBy(0, 1000));
-    await page.waitForTimeout(500);
+  // "더보기" 버튼 반복 클릭해서 결과 더 로드 (최대 10번)
+  for (let i = 0; i < 10; i++) {
+    try {
+      // 스크롤 끝까지
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(1000);
+
+      // "더보기" 버튼 찾기
+      const moreBtn = await page.$('a.more_btn, a[class*="more"], button[class*="more"]');
+      if (moreBtn) {
+        await moreBtn.click();
+        await page.waitForTimeout(2000);
+        console.log(`  → 더보기 클릭 (${i + 1}회)`);
+      } else {
+        // 페이지 넘기기 링크 찾기
+        const nextPage = await page.$('a.page_next, a[class*="next"]');
+        if (nextPage) {
+          await nextPage.click();
+          await page.waitForTimeout(2000);
+          console.log(`  → 다음 페이지 (${i + 1}회)`);
+        } else {
+          break;
+        }
+      }
+    } catch {
+      break;
+    }
   }
 
-  // 모든 외부 링크 추출 (순서대로)
+  // 최종 스크롤
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(1000);
+
+  // 모든 검색 결과 링크 추출
   const results = await page.evaluate(() => {
     const items = [];
     const seen = new Set();
 
-    // main_pack 내의 모든 링크
-    const allLinks = document.querySelectorAll("#ct a");
+    // 웹 검색 결과의 제목 링크들
+    const links = document.querySelectorAll("a");
 
-    for (const a of allLinks) {
+    for (const a of links) {
       const href = a.href || "";
       const text = (a.textContent || "").trim();
 
+      // 외부 링크만 (네이버 내부 제외)
       if (
         href &&
-        text.length > 3 &&
         href.startsWith("http") &&
+        text.length > 3 &&
         !href.includes("naver.com") &&
         !href.includes("pstatic.net") &&
         !href.includes("ader.naver") &&
+        !href.includes("openstreetmap") &&
+        !href.includes("google.com") &&
+        !href.includes("youtube.com/embed") &&
         !seen.has(href)
       ) {
-        seen.add(href);
-        items.push({
-          title: text.substring(0, 200),
-          link: href,
-        });
+        // 제목급 텍스트만 (너무 짧거나 너무 긴 건 제외)
+        if (text.length >= 5 && text.length <= 200) {
+          seen.add(href);
+          items.push({
+            title: text.substring(0, 200),
+            link: href,
+          });
+        }
       }
     }
 
@@ -94,7 +126,6 @@ async function main() {
   console.log("네이버 모바일 순위 체크:", new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }));
   console.log("====================================\n");
 
-  // DB에서 키워드 가져오기
   const { data: keywords, error } = await supabase
     .from("keywords")
     .select("*")
@@ -136,8 +167,8 @@ async function main() {
       searchCache[kw] = await searchMobileNaver(page, kw);
       console.log(`  총 ${searchCache[kw].length}개 결과`);
 
-      // 디버그: 첫 5개 결과
-      searchCache[kw].slice(0, 5).forEach((r, i) => {
+      // 디버그: 첫 10개 결과
+      searchCache[kw].slice(0, 10).forEach((r, i) => {
         console.log(`    ${i + 1}. [${extractDomain(r.link)}] ${r.title.substring(0, 50)}`);
       });
     } catch (err) {
@@ -145,7 +176,6 @@ async function main() {
       searchCache[kw] = [];
     }
 
-    // 차단 방지: 키워드 간 랜덤 대기
     await randomDelay();
   }
 
@@ -171,7 +201,6 @@ async function main() {
     });
   }
 
-  // DB 저장
   if (inserts.length > 0) {
     const { error: ie } = await supabase.from("ranks").insert(inserts);
     if (ie) console.error("\n❌ 저장 실패:", ie.message);
