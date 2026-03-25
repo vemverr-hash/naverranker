@@ -6,8 +6,12 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-function randomDelay() {
-  const ms = 2000 + Math.random() * 2000;
+// 딜레이 설정 (초)
+const DELAY_BETWEEN_PAGES = { min: 2, max: 4 };     // 페이지 간
+const DELAY_BETWEEN_KEYWORDS = { min: 3, max: 5 };  // 키워드 간
+
+function delay(config) {
+  const ms = (config.min + Math.random() * (config.max - config.min)) * 1000;
   return new Promise((r) => setTimeout(r, ms));
 }
 
@@ -19,18 +23,14 @@ function extractDomain(url) {
   }
 }
 
-// 모바일 네이버 웹 탭 1페이지 가져오기
 async function fetchPage(page, keyword, startNum) {
   const url = `https://m.search.naver.com/search.naver?where=m_web&query=${encodeURIComponent(keyword)}&start=${startNum}`;
 
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
   await page.waitForTimeout(2000);
-
-  // 스크롤해서 전체 로드
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await page.waitForTimeout(1000);
 
-  // 외부 링크 추출
   const results = await page.evaluate(() => {
     const items = [];
     const seen = new Set();
@@ -41,28 +41,22 @@ async function fetchPage(page, keyword, startNum) {
       const text = (a.textContent || "").trim();
 
       if (
-        href &&
-        href.startsWith("http") &&
-        text.length >= 5 &&
-        text.length <= 200 &&
-        !href.includes("naver.com") &&
-        !href.includes("pstatic.net") &&
-        !href.includes("ader.naver") &&
-        !href.includes("openstreetmap") &&
+        href && href.startsWith("http") &&
+        text.length >= 5 && text.length <= 200 &&
+        !href.includes("naver.com") && !href.includes("pstatic.net") &&
+        !href.includes("ader.naver") && !href.includes("openstreetmap") &&
         !seen.has(href)
       ) {
         seen.add(href);
         items.push({ title: text.substring(0, 200), link: href });
       }
     }
-
     return items;
   });
 
   return results;
 }
 
-// 키워드 검색: 여러 페이지 순회 (최대 15페이지 = 150개)
 async function searchMobileNaver(page, keyword) {
   const allResults = [];
   const seenLinks = new Set();
@@ -70,12 +64,9 @@ async function searchMobileNaver(page, keyword) {
 
   for (let p = 0; p < maxPages; p++) {
     const startNum = p * 10 + 1;
-    console.log(`  페이지 ${p + 1} (start=${startNum})...`);
 
     try {
       const results = await fetchPage(page, keyword, startNum);
-
-      // 새로운 결과만 추가
       let newCount = 0;
       for (const r of results) {
         if (!seenLinks.has(r.link)) {
@@ -84,19 +75,14 @@ async function searchMobileNaver(page, keyword) {
           newCount++;
         }
       }
-
-      // 새 결과가 0개면 더 이상 없음
-      if (newCount === 0 && p > 0) {
-        console.log(`  → 더 이상 결과 없음, 중단`);
-        break;
-      }
+      if (newCount === 0 && p > 0) break;
     } catch (err) {
       console.error(`  페이지 ${p + 1} 오류: ${err.message}`);
       break;
     }
 
-    // 차단 방지
-    await randomDelay();
+    // 페이지 간 딜레이
+    await delay(DELAY_BETWEEN_PAGES);
   }
 
   return allResults;
@@ -104,24 +90,19 @@ async function searchMobileNaver(page, keyword) {
 
 function findSiteRank(results, site) {
   const domain = site.toLowerCase().replace(/^www\./, "");
-
   for (let i = 0; i < results.length; i++) {
     const rd = extractDomain(results[i].link);
     if (rd === domain || rd.endsWith("." + domain)) {
-      return {
-        rank: i + 1,
-        title: results[i].title,
-        link: results[i].link,
-      };
+      return { rank: i + 1, title: results[i].title, link: results[i].link };
     }
   }
-
   return { rank: null, title: "", link: "" };
 }
 
 async function main() {
   console.log("====================================");
   console.log("네이버 모바일 순위 체크:", new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }));
+  console.log(`딜레이: 페이지 간 ${DELAY_BETWEEN_PAGES.min}-${DELAY_BETWEEN_PAGES.max}초, 키워드 간 ${DELAY_BETWEEN_KEYWORDS.min}-${DELAY_BETWEEN_KEYWORDS.max}초`);
   console.log("====================================\n");
 
   const { data: keywords, error } = await supabase
@@ -144,21 +125,26 @@ async function main() {
   });
 
   const page = await context.newPage();
-
   const uniqueKeywords = [...new Set(keywords.map((k) => k.keyword))];
   const searchCache = {};
 
-  for (const kw of uniqueKeywords) {
-    console.log(`\n검색: "${kw}"`);
+  for (let i = 0; i < uniqueKeywords.length; i++) {
+    const kw = uniqueKeywords[i];
+    console.log(`[${i + 1}/${uniqueKeywords.length}] 검색: "${kw}"`);
+
     try {
       searchCache[kw] = await searchMobileNaver(page, kw);
-      console.log(`  ✅ 총 ${searchCache[kw].length}개 결과`);
+      console.log(`  ✅ ${searchCache[kw].length}개 결과\n`);
     } catch (err) {
-      console.error(`  검색 실패: ${err.message}`);
+      console.error(`  실패: ${err.message}\n`);
       searchCache[kw] = [];
     }
 
-    await randomDelay();
+    // 키워드 간 딜레이 (마지막 키워드 제외)
+    if (i < uniqueKeywords.length - 1) {
+      console.log(`  ⏳ 다음 키워드까지 대기 중...\n`);
+      await delay(DELAY_BETWEEN_KEYWORDS);
+    }
   }
 
   await browser.close();
@@ -166,7 +152,7 @@ async function main() {
   const now = new Date().toISOString();
   const inserts = [];
 
-  console.log("\n=== 순위 결과 ===");
+  console.log("=== 순위 결과 ===");
   for (const kw of keywords) {
     const results = searchCache[kw.keyword] || [];
     const found = findSiteRank(results, kw.site);
