@@ -1,0 +1,30 @@
+name: 네이버 순위 체크
+
+on:
+  schedule:
+    # 30분마다 실행 (UTC 기준)
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    # 수동 실행도 가능
+
+jobs:
+  check-rank:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: Node.js 설치
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 패키지 설치
+        run: npm install
+
+      - name: 순위 체크 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: node check-rank.js

@@ -1,0 +1,13 @@
+{
+  "name": "naver-rank-checker",
+  "version": "1.0.0",
+  "description": "네이버 검색 순위 자동 체크",
+  "scripts": {
+    "check": "node check-rank.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0",
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
