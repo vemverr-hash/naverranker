@@ -1,33 +1,32 @@
 name: 네이버 순위 체크
-
 on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
-
+schedule:
+- cron: '*/30 * * * *'
+workflow_dispatch:
+repository_dispatch:
+types: [cron]
 jobs:
-  check-rank:
-    runs-on: ubuntu-latest
+check-rank:
+runs-on: ubuntu-latest
+steps:
+  - name: 코드 가져오기
+    uses: actions/checkout@v4
 
-    steps:
-      - name: 코드 가져오기
-        uses: actions/checkout@v4
+  - name: Node.js 설치
+    uses: actions/setup-node@v4
+    with:
+      node-version: '22'
 
-      - name: Node.js 설치
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+  - name: 패키지 설치
+    run: npm install
 
-      - name: 패키지 설치
-        run: npm install
+  - name: Playwright 브라우저 설치
+    run: npx playwright install chromium --with-deps
 
-      - name: Playwright 브라우저 설치
-        run: npx playwright install chromium --with-deps
-
-      - name: 순위 체크 실행
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
-          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-        run: node check-rank.js
+  - name: 순위 체크 실행
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+    run: node check-rank.js
